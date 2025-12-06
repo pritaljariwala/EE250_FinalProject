@@ -1,7 +1,13 @@
 # laptop_subscriber.py
 import paho.mqtt.client as mqtt
+import time
 from filters import moving_average
 from fft_processing import add_sample, compute_fft 
+
+# Thresholds for clap detection
+TAP_THRESHOLD = 600
+DOUBLE_TAP_WINDOW = 1  # seconds
+last_clap_time = 0
 
 def on_message(client, userdata, msg):
     raw_value = int(msg.payload.decode())
@@ -23,6 +29,19 @@ def on_message(client, userdata, msg):
             print(f"Raw={raw_val}, Filtered={filtered:.2f}, FFT Energy={energy:.2f}")
         else:
             print(f"Raw={raw_val}, Filtered={filtered:.2f}")
+
+
+        # Clap detection logic
+        now = time.time()
+        if filtered > TAP_THRESHOLD and (now - last_clap_time) > 0.2:
+            # Check for double clap
+            if (now - last_clap_time) < DOUBLE_TAP_WINDOW:
+                print("DOUBLE TAP → skip track")
+                # <-- your Spotify skip function
+            else:
+                print("SINGLE TAP → toggle play/pause")
+                # <-- your Spotify toggle function
+            last_clap_time = now
 
     except ValueError:
         print("Invalid payload received.")
