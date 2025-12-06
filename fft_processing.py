@@ -2,7 +2,7 @@
 
 import numpy as np
 
-FFT_SIZE = 256
+FFT_SIZE = 128
 sample_buffer = []
 
 def add_sample(value: float):
