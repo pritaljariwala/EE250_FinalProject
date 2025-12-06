@@ -1,2 +1,2 @@
-# EE250_FinalProject_EchoPlay
-EchoPlay : Real-Time Audio and Motion Sensing for Spotify Interaction
+# EE250_FinalProject
+Real-Time Audio and Motion Sensing for Spotify Interaction
