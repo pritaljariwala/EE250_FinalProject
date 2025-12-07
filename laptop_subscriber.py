@@ -8,20 +8,23 @@ from fft_processing import add_sample, compute_fft
 from spotify_control import play_pause_toggle, skip_track
 
 # Thresholds for clap detection
-TAP_THRESHOLD = 700
+TAP_THRESHOLD = 500
+TAP_THRESHOLD_DELTA = 300
 DOUBLE_TAP_WINDOW = 1  # seconds
+last_clap_time = 0.0
+prev_filtered = 0.0
+noise_floor = 100.0
+NOISE_ALPHA = 0.1
 
 TCP_HOST = "172.20.10.7"  # Bind to all available network interfaces
 TCP_PORT = 65432   
 
 data_lock = threading.Lock()
-
-last_clap_time = 0.0
-prev_filtered = 0.0
 state = "Paused"
 
+
+
 def handle_client_connection(conn):
-    global raw_val, filtered, state
     try:
         while True:
             with data_lock:
@@ -50,7 +53,7 @@ def start_tcp_server():
             threading.Thread(target=handle_client_connection, args=(conn,)).start()
 
 def on_message(client, userdata, msg):
-    global last_clap_time, filtered, raw_val, state, prev_filtered
+    global last_clap_time, filtered, raw_val,prev_filtered,state
 
     try:
         raw_val = int(msg.payload.decode())
@@ -62,7 +65,6 @@ def on_message(client, userdata, msg):
     print("Received:", raw_val)
 
     # 1. Filter
-    #filtered = moving_average(raw_val)
     filtered = raw_val
     # 2. Add to FFT buffer
     add_sample(raw_val)
@@ -75,24 +77,19 @@ def on_message(client, userdata, msg):
     else:
         print(f"Raw={raw_val}, Filtered={filtered:.2f}")
 
-    # 4. Clap detection
-    is_rising = prev_filtered <= TAP_THRESHOLD and filtered > TAP_THRESHOLD
+    # 4. Clap detection with noise flootr adjustment
+    if filtered < noise_floor + 100:  
+        noise_floor = (1 - NOISE_ALPHA) * noise_floor + NOISE_ALPHA * filtered
 
     now = time.time()
 
-    if is_rising and (now - last_clap_time) > 0.2:
-        dt = now - last_clap_time
-        if 0 < (now - last_clap_time) < DOUBLE_TAP_WINDOW:
-            state = "Skipped"
-            print("DOUBLE TAP → skip track")
-            skip_track()
-        else:
-            print("SINGLE TAP → toggle play/pause")
-            if state == "Paused":
-                state = "Playing"
-            elif state == "Playing":
-                state = "Paused"
-            play_pause_toggle()
+    if is_rising and (now - last_clap_time) > 0.3:
+        print("SINGLE TAP → toggle play/pause")
+        if state == "Paused":
+            state = "Playing"
+        elif state == "Playing":
+            state = "Paused"
+        play_pause_toggle()
 
         last_clap_time = now
     
