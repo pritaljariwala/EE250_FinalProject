@@ -21,6 +21,7 @@ prev_filtered = 0.0
 state = "Paused"
 
 def handle_client_connection(conn):
+    global raw_val, filtered, state
     try:
         while True:
             with data_lock:
@@ -49,7 +50,7 @@ def start_tcp_server():
             threading.Thread(target=handle_client_connection, args=(conn,)).start()
 
 def on_message(client, userdata, msg):
-    global last_clap_time, filtered, raw_val
+    global last_clap_time, filtered, raw_val, state, prev_filtered
 
     try:
         raw_val = int(msg.payload.decode())
