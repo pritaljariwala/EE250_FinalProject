@@ -1,4 +1,3 @@
-#windows laptop_subscriber.py
 import paho.mqtt.client as mqtt
 import time
 import socket
@@ -7,117 +6,108 @@ from filters import moving_average
 from fft_processing import add_sample, compute_fft 
 from spotify_control import play_pause_toggle, skip_track
 
-# Thresholds for clap detection
-TAP_THRESHOLD = 500
-TAP_THRESHOLD_DELTA = 300
-DOUBLE_TAP_WINDOW = 1  # seconds
+# =======================
+# Detection parameters
+# =======================
+TAP_THRESHOLD_DELTA = 150
+DOUBLE_TAP_WINDOW = 1.0
+REFRACTORY = 0.35        # ignore events for 350ms
+COOLDOWN = 2.0           # ignore EVERYTHING for 2 seconds after a tap
+
 last_clap_time = 0.0
 prev_filtered = 0.0
 noise_floor = 100.0
 NOISE_ALPHA = 0.1
 
-TCP_HOST = "0.0.0.0"  # Bind to all available network interfaces
-TCP_PORT = 65432   
-
-data_lock = threading.Lock()
+raw_val = 0
+filtered = 0
+energy = 0
 state = "Paused"
+cooldown_until = 0.0
 
-
-def handle_client_connection(conn):
-    try:
-        while True:
-            with data_lock:
-            # Send the latest data to the front-end (UI)
-                data = f"Raw: {raw_val}, Filtered: {filtered}, Playback: {state}"
-                conn.sendall(data.encode('utf-8'))
-            time.sleep(1)
-    except Exception as e:
-        print(f"TCP Error: {e}")
-    finally:
-        conn.close()
-
-def start_tcp_server():
-    # Create the TCP socket and bind it to the host and port
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-        server_socket.bind((TCP_HOST, TCP_PORT))
-        server_socket.listen(1)
-        print(f"TCP Server listening on {TCP_HOST}:{TCP_PORT}")
-
-        while True:
-            # Accept incoming TCP connection
-            conn, addr = server_socket.accept()
-            print(f"Connection established with {addr}")
-
-            # Handle the connection in a separate thread
-            threading.Thread(target=handle_client_connection, args=(conn,)).start()
-
-
-
+# =======================
+# MQTT callback
+# =======================
 def on_message(client, userdata, msg):
-    global last_clap_time, filtered, raw_val,prev_filtered,state
+    global last_clap_time, raw_val, filtered, prev_filtered,filtered
+    global state, noise_floor, energy, cooldown_until
+
+    payload = msg.payload.decode()
 
     try:
-        raw_val = int(msg.payload.decode())
-    except ValueError:
-        print("Invalid payload received:", msg.payload)
+        raw_val = int(payload)
+    except:
+        print("Invalid payload:", payload)
         return
 
-    # Basic logging
     print("Received:", raw_val)
 
-    # 1. Filter
+    # Filtering & FFT
+    add_sample(filtered)
     filtered = raw_val
-    # 2. Add to FFT buffer
-    add_sample(raw_val)
-
-    # 3. Compute FFT
     fft_mag = compute_fft()
     if fft_mag is not None:
         energy = fft_mag.sum()
-        print(f"Raw={raw_val}, Filtered={filtered:.2f}, FFT Energy={energy:.2f}")
-    else:
-        print(f"Raw={raw_val}, Filtered={filtered:.2f}")
-
-    # 4. Clap detection with noise flootr adjustment
-    if filtered < noise_floor + 100:  
-        noise_floor = (1 - NOISE_ALPHA) * noise_floor + NOISE_ALPHA * filtered
 
     now = time.time()
 
-    if is_rising and (now - last_clap_time) > 0.3:
-        print("SINGLE TAP → toggle play/pause")
+    # =======================
+    # COOLDOWN CHECK
+    # =======================
+    if now < cooldown_until:
+        prev_filtered = filtered
+        return
+
+    # =======================
+    # NOISE FLOOR UPDATE
+    # =======================
+    if filtered < noise_floor + 100:
+        noise_floor = (1 - NOISE_ALPHA) * noise_floor + NOISE_ALPHA * filtered
+
+    threshold = noise_floor + TAP_THRESHOLD_DELTA
+
+    # =======================
+    # RISING EDGE DETECTION
+    # =======================
+    is_rising = prev_filtered <= threshold and filtered > threshold
+
+    if is_rising and (now - last_clap_time) > REFRACTORY:
+
+        # SINGLE TAP
+        print("Filtered:", filtered, "Noise Floor:", noise_floor)
+        print("Cooldown for 2 seconds...\n")
+
         if state == "Paused":
             state = "Playing"
-        elif state == "Playing":
+        else:
             state = "Paused"
+
         play_pause_toggle()
 
+        # Apply cooldown so ringing cannot retrigger
+        cooldown_until = now + COOLDOWN
         last_clap_time = now
-    
+
     prev_filtered = filtered
 
+
+# =======================
+# MQTT STARTER
+# =======================
 def start_mqtt():
-    # Initialize the MQTT client
     client = mqtt.Client()
     client.on_message = on_message
-
-    try:
-        # Connect to the MQTT broker
-        client.connect("172.20.10.7", 1883, 60)
-        print("Connected to MQTT broker.")
-        
-        # Subscribe to the relevant topic
-        client.subscribe("project/raw_sound")
-
-        # Start the MQTT loop in the background
-        client.loop_start()  # Non-blocking
-    except Exception as e:
-        print(f"Error starting MQTT client: {e}")
+    client.connect("172.20.10.7", 1883, 60)
+    client.subscribe("project/raw_sound")
+    print("Connected to MQTT broker.")
+    client.loop_start()
 
 
+# =======================
+# MAIN
+# =======================
 if __name__ == "__main__":
-    # Start MQTT client in a separate thread
-    threading.Thread(target=start_mqtt, daemon=True).start()
-
-    # Start the TCP server in the main thread
-    start_tcp_server()
+    start_mqtt()
+    print("Spotify Control Ready.")
+    while True:
+        time.sleep(1)

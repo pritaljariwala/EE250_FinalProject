@@ -2,6 +2,8 @@ import spotipy
 
 from spotipy.oauth2 import SpotifyOAuth
 
+CACHE_PATH = "C:\Users\greer\.spotipy_token_cache"
+
 sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
     client_id="00f2556693ce46f1b7c2e12c38e1521d",
     client_secret="72253db324594a1587ea4858f32772d4",
